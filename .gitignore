@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+.Python
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Dataset fuente (solo local, no subir al repo)
+Dataset/
+
+# Outputs de datos procesados (generados por el pipeline)
+data/raw/*
+data/processed/*
+data/master/*
+data/exports/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/master/.gitkeep
+!data/exports/.gitkeep
+
+# Artefactos de modelos entrenados (binarios pesados)
+models/*.pkl
+models/*.joblib
+models/*.pt
+models/*.bin
+models/*.h5
+!models/.gitkeep
+
+# Secrets y configuración local
+.env
+.env.*
+*.key
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude
+.claude/settings.local.json
+CLAUDE.md
