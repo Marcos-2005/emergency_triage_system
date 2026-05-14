@@ -1,7 +1,11 @@
 # ============================================================
-# TriageIA — Dependencias del proyecto
+# TriageIA — Dependencias del proyecto (ML/NLP/análisis)
 # Instalar: pip install -r requirements.txt
 # Modelo spaCy: python -m spacy download en_core_web_sm
+#
+# NOTA: Las dependencias de Airflow están separadas en:
+#       infra/airflow/requirements-airflow.txt
+#       para no contaminar el entorno de notebooks/ML.
 # ============================================================
 
 # --- Core ML ---
@@ -30,8 +34,15 @@ openai-whisper>=20231117
 # --- App demo ---
 streamlit>=1.28.0
 
-# --- LLM (extracción/normalización, NO clasificación final) ---
+# --- LLM (extracción/normalización en Phase 3-4, NO clasificación final) ---
 anthropic>=0.25.0
+
+# --- Base de datos (trazabilidad en Postgres) ---
+psycopg2-binary>=2.9.0
+sqlalchemy>=2.0.0
+
+# --- Almacenamiento de objetos (MinIO/S3) ---
+minio>=7.2.0
 
 # --- Notebooks ---
 jupyterlab>=4.0.0

@@ -58,3 +58,5 @@ desktop.ini
 # Claude
 .claude/*
 CLAUDE.md
+docs/*
+infra/airflow/logs/*

@@ -157,21 +157,85 @@ Cada entrada incluye: qué se decidió, por qué, alternativas descartadas y rie
 
 ---
 
-## Decisiones Pendientes (para Fase 2)
+## Reestructuración del proyecto (14/05/2026)
+
+### D-011: Arquitectura de orquestación — Airflow + Postgres + MinIO + Docker Compose
+
+**Decisión:** Incorporar Airflow (LocalExecutor), Postgres, MinIO y Docker Compose como infraestructura de orquestación del pipeline.
+
+**Por qué:**
+- El pipeline tiene dos etapas operacionales bien diferenciadas: entrenamiento (Etapa A) e inferencia (Etapa B). Airflow permite orquestar estas etapas con control de estado, reintentos y logs.
+- Postgres centraliza la trazabilidad: cada entrada genera un GUID_Entrevista con timestamps, estados y log de decisiones. Esto hace el sistema auditable y defendible.
+- MinIO separa los artefactos binarios (modelos .joblib, CSVs, figuras) del código y la base de datos, siguiendo convenciones de ML en producción.
+- Docker Compose permite reproducir el entorno completo en cualquier máquina con un solo comando.
+
+**Alternativas descartadas:**
+- Sin orquestador (scripts secuenciales): sin trazabilidad, sin reintentos, difícil de extender.
+- Prefect/Luigi: menos estándar en el sector que Airflow; menor valor de aprendizaje.
+- Kafka: descartado explícitamente. El volumen (272 casos batch) no lo justifica.
+- Celery + Redis: innecesario para LocalExecutor en entorno académico con 1 usuario.
+- Kubernetes: over-engineering para un proyecto académico en laptop.
+
+**Simplificaciones adoptadas (anti-sobreingenierización):**
+- Airflow LocalExecutor (sin Celery/Redis)
+- Postgres single instance
+- MinIO single node
+- DAGs secuenciales (sin paralelismo complejo)
+- LLM solo en preparación de datos (Phase 3-4), nunca en inferencia
+
+**Entorno de ejecución:** Windows con Docker Desktop + WSL2.
+
+**LLM para ground truth:** Claude API (Anthropic) — ya configurado en requirements.txt.
+
+**Impacto en la estructura del proyecto:**
+- Nueva carpeta `infra/` con docker-compose.yml, DAGs, init.sql, setup_buckets.sh
+- Nuevas carpetas `src/pipeline/` y `src/traceability/`
+- Renumeración de fases: Phase 2 pasa a ser infraestructura de orquestación
+- Skills actualizadas: triageia-context, triageia-data, triageia-ml-modeling, triageia-llm-labeling, triageia-phase
+- Nuevo skill: triageia-infra
+
+**Riesgos:**
+1. Complejidad de setup inicial de Docker Compose en WSL2 — mitigación: documentar paso a paso en Phase 2.
+2. Dependencias de Airflow pueden conflictuar con el entorno ML — mitigación: separar `requirements.txt` (ML) de `infra/airflow/requirements-airflow.txt`.
+
+---
+
+## Decisiones Pendientes (actualizadas 14/05/2026)
 
 | ID | Decisión | Fase |
 |----|---------|------|
-| P-001 | ¿Cómo asignar niveles Manchester? (mapeo / LLM / combinado) | Fase 2 |
-| P-003 | ¿Cómo tratar el desbalanceo RES=78%? (class_weight / SMOTE / submuestreo) | Fase 6-7 |
-| P-004 | ¿Estrategia de train/val/test dado el tamaño reducido (272 casos)? | Fase 7 |
+| P-001 | ¿Cómo asignar niveles Manchester? → LLM + revisión (recomendado) | Phase 3 |
+| P-003 | ¿Cómo tratar el desbalanceo RES=78%? (class_weight / SMOTE / submuestreo) | Phase 6-7 |
+| P-004 | ¿Estrategia de train/val/test dado el tamaño reducido (272 casos)? | Phase 7 |
 
 *P-002 resuelta en D-008: se usa diálogo completo como baseline principal.*
 
 ---
 
+## Phase 2 — Infraestructura de Orquestación (14/05/2026)
+
+### D-012: Implementación de la infraestructura base (Phase 2)
+
+**Implementado:**
+- `infra/docker-compose.yml` — Airflow (LocalExecutor) + Postgres + MinIO
+- `infra/postgres/init.sql` — Tablas: entrevistas, predicciones, pipeline_runs
+- `infra/minio/setup_buckets.sh` — Crea 4 buckets: triageia-raw, -processed, -models, -reports
+- `infra/airflow/dags/dag_training.py` — Etapa A, esqueleto con 7 tasks (PythonOperator placeholders)
+- `infra/airflow/dags/dag_inference.py` — Etapa B, esqueleto con 8 tasks + BranchOperator para audio/texto
+- `src/traceability/tracer.py` — Funciones: crear_entrevista, actualizar_estado, registrar_prediccion, registrar_run
+- `src/traceability/storage.py` — Funciones: subir_archivo, descargar_archivo, subir_dataframe, descargar_dataframe
+- `infra/airflow/requirements-airflow.txt` — Deps del contenedor Airflow separadas del entorno ML
+- `infra/.env.example` — Template de variables de entorno
+- `docs/decisions/02_orchestration_infra.md` — Decisión documentada completa
+
+**Referencia:** `docs/decisions/02_orchestration_infra.md`
+
+---
+
 ## Próximos pasos confirmados
 
-1. Invocar `/triageia-phase fase-2` para iniciar el protocolo de la Fase 2
-2. Fase 2: Decidir estrategia de asignación de niveles Manchester (P-001)
-3. Fase 2: Construir `data/master/dataset_maestro.csv` con columna `nivel_manchester`
-4. Crear `docs/decisions/02_ground_truth.md`
+1. Levantar el stack: `docker compose -f infra/docker-compose.yml up -d`
+2. Verificar: Airflow UI + MinIO + Postgres schema + DAGs visibles
+3. Hacer capturas para la presentación (Airflow UI, MinIO consola, docker ps)
+4. Invocar `/triageia-phase fase-3` para iniciar ground truth Manchester
+5. Crear `docs/decisions/03_ground_truth.md` (Phase 3)

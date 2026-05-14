@@ -1,0 +1,167 @@
+# TriageIA — Docker Compose
+# Servicios: Airflow (LocalExecutor) + Postgres + MinIO
+#
+# Arrancar: docker compose up -d
+# Parar:    docker compose down
+# Limpiar:  docker compose down -v   (borra volúmenes — datos incluidos)
+#
+# UI Airflow:  http://localhost:8080  (admin / admin)
+# UI MinIO:    http://localhost:9001  (minioadmin / minioadmin)
+# Postgres:    localhost:5432         (triageia / triageia / triageia_db)
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.4
+  environment: &airflow-common-env
+    # --- Airflow core ---
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__FERNET_KEY: 'AnyP0JqJapjEPghbgy3yRn_tGe0bPIi7gV3By-T4vFM='
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__WEBSERVER__SECRET_KEY: 'triageia_secret_key_cambiar_en_produccion'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    # --- Conexión a Postgres (metastore Airflow + tablas TriageIA en mismo DB) ---
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://triageia:triageia@postgres/triageia_db
+    AIRFLOW__CELERY__RESULT_BACKEND: ''
+    # --- Variables de entorno del proyecto (disponibles en DAGs) ---
+    TRIAGEIA_DB_HOST: postgres
+    TRIAGEIA_DB_PORT: '5432'
+    TRIAGEIA_DB_NAME: triageia_db
+    TRIAGEIA_DB_USER: triageia
+    TRIAGEIA_DB_PASSWORD: triageia
+    MINIO_ENDPOINT: minio:9000
+    MINIO_ACCESS_KEY: minioadmin
+    MINIO_SECRET_KEY: minioadmin
+    MINIO_SECURE: 'false'
+    # --- Clave API Anthropic (Phase 3+, se lee del .env) ---
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    # --- Python path para importar src/ desde los DAGs ---
+    PYTHONPATH: /opt/airflow:/opt/airflow/project_src
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ../src:/opt/airflow/project_src    # src/ del proyecto, importable como 'traceability', 'models', etc.
+  depends_on: &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+
+services:
+
+  # ─────────────────────────────────────────────────────────────
+  # Postgres — metastore de Airflow + trazabilidad TriageIA
+  # Una sola instancia, una sola base de datos: triageia_db
+  # ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15
+    container_name: triageia-postgres
+    environment:
+      POSTGRES_USER: triageia
+      POSTGRES_PASSWORD: triageia
+      POSTGRES_DB: triageia_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # init.sql crea las tablas de trazabilidad al primer arranque
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01_triageia_schema.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "triageia", "-d", "triageia_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # MinIO — almacenamiento de artefactos (modelos, CSVs, figuras)
+  # UI en :9001, API S3-compatible en :9000
+  # ─────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: triageia-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # Airflow Init — inicializa la DB y crea el usuario admin
+  # Corre una vez y termina. Webserver y scheduler lo esperan.
+  # ─────────────────────────────────────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    container_name: triageia-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        echo "Inicializando Airflow DB..."
+        airflow db init
+        echo "Creando usuario admin..."
+        airflow users create \
+          --username admin \
+          --firstname Admin \
+          --lastname TriageIA \
+          --role Admin \
+          --email admin@triageia.local \
+          --password admin
+        echo "Airflow inicializado correctamente."
+    restart: on-failure
+
+  # ─────────────────────────────────────────────────────────────
+  # Airflow Webserver — UI en http://localhost:8080
+  # ─────────────────────────────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: triageia-airflow-webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────
+  # Airflow Scheduler — ejecuta los DAGs (LocalExecutor)
+  # ─────────────────────────────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: triageia-airflow-scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: triageia_postgres_data
+  minio_data:
+    name: triageia_minio_data

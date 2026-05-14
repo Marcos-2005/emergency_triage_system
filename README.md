@@ -1,6 +1,6 @@
 # TriageIA — Sistema Automático de Triaje Manchester con ML
 
-> Herramienta de soporte a la decisión clínica que transforma la voz del paciente en una prioridad médica estructurada.
+> Herramienta de soporte a la decisión clínica que transforma texto clínico o voz del paciente en una prioridad médica estructurada.
 
 ---
 
@@ -12,6 +12,7 @@ TriageIA simula un sistema de triaje automático basado en el **Sistema Manchest
 2. Clasifica el caso en uno de los 5 niveles de prioridad Manchester (C1-C5)
 3. Explica la predicción con SHAP
 4. Aplica reglas de seguridad clínica para detectar casos de alto riesgo
+5. Registra todo el proceso con trazabilidad completa (GUID, timestamps, estados)
 
 El objetivo principal **no es solo que funcione**, sino demostrar comprensión profunda de cada decisión de diseño: por qué se eligió cada modelo, qué métricas importan en un contexto clínico y cuáles son las limitaciones del sistema.
 
@@ -19,41 +20,76 @@ El objetivo principal **no es solo que funcione**, sino demostrar comprensión p
 
 ## Sistema Manchester
 
-| Nivel | Color   | Tiempo máx. | Descripción |
-|-------|---------|-------------|-------------|
-| C1    | Rojo    | Inmediato   | Resucitación / intervención urgente |
-| C2    | Naranja | 10-15 min   | Emergencia |
-| C3    | Amarillo| 60 min      | Urgencia |
-| C4    | Verde   | 2 horas     | Urgencia menor |
-| C5    | Morado  | 4 horas     | No urgente |
+| Nivel | Color    | Tiempo máx. | Descripción |
+|-------|----------|-------------|-------------|
+| C1    | Rojo     | Inmediato   | Resucitación / intervención urgente |
+| C2    | Naranja  | 10-15 min   | Emergencia |
+| C3    | Amarillo | 60 min      | Urgencia |
+| C4    | Verde    | 2 horas     | Urgencia menor |
+| C5    | Morado   | 4 horas     | No urgente |
 
 ---
 
 ## Dataset
 
 - **Fuente:** Diálogos médico-paciente transcritos (OSCE clínico, inglés)
-- **Volumen:** 272 casos en `Dataset/cleantext/`
-- **Especialidades:** Respiratorio (RES), Musculoesquelético (MSK), Gastroenterológico (GAS), Cardiológico (CAR), Dermatológico (DER), General (GEN)
-- **Etiquetas Manchester:** Generadas en Fase 2 mediante mapeo especialidad + análisis de contenido
-- **Nota:** Distribución muy desbalanceada (RES=78%). Se documenta y trata en la Fase 6-7.
+- **Volumen:** 272 casos en `Dataset/text/text/`
+- **Especialidades:** Respiratorio (RES=213), Musculoesquelético (MSK=46), Gastroenterológico (GAS=6), Cardiológico (CAR=5), Dermatológico (DER=1), General (GEN=1)
+- **Etiquetas Manchester:** Asignadas en Phase 3 mediante LLM + revisión humana
+- **Nota:** Distribución muy desbalanceada (RES=78%). Se documenta y trata explícitamente.
 
 ---
 
-## Pipeline de fases
+## Arquitectura de servicios
 
 ```
-Fase 0  → Infraestructura base (estructura, dependencias, configuración)
-Fase 1  → Exploración del dataset (EDA, análisis de distribución)
-Fase 2  → Construcción del dataset maestro (labels Manchester)
-Fase 3  → Limpieza y normalización textual
-Fase 4  → Extracción de entidades clínicas (NER)
-Fase 5  → Normalización de síntomas
-Fase 6  → Ingeniería de features (TF-IDF, features binarias)
-Fase 7  → Entrenamiento de modelos (NB, LR, SVM, RF, XGBoost)
-Fase 8  → Comparación de métricas y selección del mejor modelo
-Fase 9  → Auditoría de seguridad clínica (under-triage)
-Fase 10 → Aplicación Streamlit (audio → transcripción → predicción)
-Fase 11 → Documentación y defensa
+┌───────────────────────────────────────────────────────────────┐
+│  Docker Compose (WSL2)                                         │
+│                                                                │
+│  ┌──────────────────┐    ┌─────────────────────────────────┐  │
+│  │   Airflow :8080  │───▶│   Postgres :5432                │  │
+│  │  (LocalExecutor) │    │  - Metastore Airflow            │  │
+│  │  dag_training    │    │  - entrevistas (GUID, estados)  │  │
+│  │  dag_inference   │    │  - predicciones                 │  │
+│  └──────────────────┘    │  - pipeline_runs                │  │
+│                          └─────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │   MinIO :9000 / consola :9001                           │  │
+│  │  triageia-raw · triageia-processed · triageia-models    │  │
+│  │  triageia-reports                                       │  │
+│  └─────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Etapa A — Entrenamiento** (`dag_training`):
+```
+load_raw_data → assign_manchester_labels → clean_and_ner
+→ build_features → train_models → evaluate_compare → safety_audit
+```
+
+**Etapa B — Inferencia** (`dag_inference`):
+```
+receive_input → [transcribe_if_audio] → clean_text → extract_entities
+→ build_features → predict → apply_safety_rules → store_result
+```
+
+---
+
+## Pipeline de fases (desarrollo)
+
+```
+Phase 0  → ✅ Infraestructura base (estructura, dependencias, configuración)
+Phase 1  → ✅ Exploración del dataset (EDA, análisis de distribución)
+Phase 2  → ⏳ Infraestructura de orquestación (Docker, Airflow, Postgres, MinIO)
+Phase 3  → ⏳ Ground truth Manchester (LLM + revisión)
+Phase 4  → ⏳ Limpieza y NER
+Phase 5  → ⏳ Ingeniería de features (TF-IDF, features estructuradas)
+Phase 6  → ⏳ Pipeline de entrenamiento (DAG Airflow — Etapa A)
+Phase 7  → ⏳ Evaluación y comparación de modelos
+Phase 8  → ⏳ Reglas de seguridad clínica y auditoría de under-triage
+Phase 9  → ⏳ Pipeline de inferencia (DAG Airflow — Etapa B)
+Phase 10 → ⏳ Demo Streamlit (audio → Whisper → pipeline → predicción)
+Phase 11 → ⏳ Documentación y defensa
 ```
 
 ---
@@ -62,50 +98,59 @@ Fase 11 → Documentación y defensa
 
 ```
 emergency_triage_system/
-├── Dataset/          <- Dataset fuente (diálogos clínicos)
-│   ├── cleantext/    <- 272 transcripciones limpias
-│   └── *.info        <- Alineamiento audio-texto
-├── data/             <- Datos procesados (generados, no en git)
-├── notebooks/        <- Análisis exploratorio y experimentos por fase
-├── src/              <- Código fuente modular
-│   ├── preprocessing/
-│   ├── extraction/
-│   ├── features/
-│   ├── models/
-│   └── utils/
-├── models/           <- Modelos entrenados serializados
-├── reports/          <- Figuras, métricas y registros de decisiones
-├── app/              <- Demo Streamlit
-└── docs/             <- Documentación de decisiones y defensa
+├── Dataset/              <- Dataset fuente (solo local, no en git)
+│   ├── text/text/        <- 272 diálogos D:/P: (fuente para ML)
+│   └── cleantext/        <- Formato ASR (referencia demo Whisper)
+├── data/                 <- Datos procesados (no en git)
+├── infra/                <- Infraestructura de servicios (en git)
+│   ├── docker-compose.yml
+│   ├── airflow/dags/     <- dag_training.py, dag_inference.py
+│   ├── postgres/         <- init.sql (schema trazabilidad)
+│   └── minio/            <- setup_buckets.sh
+├── notebooks/            <- Análisis por fase
+├── src/                  <- Código fuente modular
+│   ├── preprocessing/    <- text_cleaner.py, normalizer.py
+│   ├── extraction/       <- ner.py, llm_extractor.py
+│   ├── features/         <- feature_builder.py
+│   ├── models/           <- trainer.py, evaluator.py, safety_rules.py
+│   ├── pipeline/         <- tasks.py por etapa (glue code para DAGs)
+│   ├── traceability/     <- tracer.py (GUID/Postgres), storage.py (MinIO)
+│   └── utils/            <- manchester.py
+├── models/               <- Artefactos .joblib (solo local, no en git)
+├── app/                  <- Demo Streamlit
+├── reports/              <- Figuras y métricas para la presentación
+└── docs/                 <- Decisiones y material de defensa
 ```
 
 ---
 
 ## Instalación
 
+### Entorno de análisis y ML
+
 ```bash
 # Crear entorno virtual
 python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # Linux/Mac
+source .venv/bin/activate      # Linux/WSL2
+# .venv\Scripts\activate       # Windows CMD
 
-# Instalar dependencias
+# Instalar dependencias ML/NLP
 pip install -r requirements.txt
 
 # Modelo de spaCy en inglés
 python -m spacy download en_core_web_sm
 ```
 
----
-
-## Ejecución
+### Servicios de orquestación (Phase 2+)
 
 ```bash
-# Exploración (Fase 1)
-jupyter lab notebooks/01_eda.ipynb
+# Levantar todos los servicios
+docker compose -f infra/docker-compose.yml up -d
 
-# Demo Streamlit (Fase 10)
-streamlit run app/streamlit_app.py
+# Verificar servicios
+# Airflow UI:  http://localhost:8080
+# MinIO UI:    http://localhost:9001
+# Postgres:    localhost:5432 (triageia_db)
 ```
 
 ---
@@ -114,9 +159,10 @@ streamlit run app/streamlit_app.py
 
 | Modelo | Justificación |
 |--------|--------------|
+| DummyClassifier | Baseline absoluto |
 | Naive Bayes | Baseline probabilístico, interpretable, rápido |
 | Logistic Regression | Lineal, funciona bien con TF-IDF, coeficientes explicables |
-| SVM | Robusto en espacios de alta dimensionalidad |
+| LinearSVC | Robusto en alta dimensionalidad |
 | Random Forest | Ensemble, maneja bien el ruido textual |
 | XGBoost | Mejor rendimiento empírico en datos tabulares |
 

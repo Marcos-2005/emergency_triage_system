@@ -1,0 +1,25 @@
+# TriageIA — Dependencias de Airflow
+# SEPARADAS de requirements.txt principal para no contaminar el entorno de notebooks/ML.
+#
+# NO instalar en el mismo entorno que requirements.txt.
+# Airflow gestiona sus propias dependencias dentro del contenedor Docker.
+#
+# Estas dependencias se instalan en la imagen de Airflow via:
+#   docker build o montando como volumen en docker-compose.yml
+#
+# Para instalar manualmente en el contenedor Airflow:
+#   docker compose exec airflow-scheduler pip install -r /opt/airflow/requirements-airflow.txt
+
+# --- Airflow (debe coincidir con la versión de la imagen en docker-compose.yml) ---
+apache-airflow==2.8.4
+
+# --- Providers necesarios para TriageIA ---
+apache-airflow-providers-postgres>=5.10.0    # Conexiones Postgres en Airflow UI
+apache-airflow-providers-http>=4.10.0        # Futuras llamadas HTTP (opcional)
+
+# --- Dependencias del proyecto necesarias dentro de los DAGs ---
+# (se instalan en el contenedor Airflow para que las tasks puedan importarlas)
+psycopg2-binary>=2.9.0    # Conexión a Postgres desde tracer.py
+minio>=7.2.0              # Conexión a MinIO desde storage.py
+pandas>=2.0.0             # Manipulación de DataFrames en tasks
+anthropic>=0.25.0         # LLM para Phase 3 (ground truth)
