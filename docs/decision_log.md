@@ -204,10 +204,10 @@ Cada entrada incluye: qué se decidió, por qué, alternativas descartadas y rie
 
 | ID | Decisión | Fase |
 |----|---------|------|
-| P-001 | ¿Cómo asignar niveles Manchester? → LLM + revisión (recomendado) | Phase 3 |
 | P-003 | ¿Cómo tratar el desbalanceo RES=78%? (class_weight / SMOTE / submuestreo) | Phase 6-7 |
 | P-004 | ¿Estrategia de train/val/test dado el tamaño reducido (272 casos)? | Phase 7 |
 
+*P-001 resuelta en D-013: estrategia combinada prior + LLM sugeridor.*  
 *P-002 resuelta en D-008: se usa diálogo completo como baseline principal.*
 
 ---
@@ -232,10 +232,48 @@ Cada entrada incluye: qué se decidió, por qué, alternativas descartadas y rie
 
 ---
 
+## Phase 3 — Ground Truth Manchester (14/05/2026)
+
+### D-013: Estrategia de asignación de etiquetas Manchester
+
+**Decisión:** Estrategia combinada: prior por especialidad + LLM (Claude Haiku) como sugeridor + columnas separadas para trazabilidad.
+
+**Por qué:**
+- El prior por especialidad es un baseline auditado y reproducible. Garantiza una etiqueta aunque el LLM falle.
+- Claude Haiku analiza el texto del paciente y sugiere nivel + justificación + confianza. Captura información semántica que el prior no puede.
+- `nivel_llm_sugerido` ≠ `nivel_manchester`: la etiqueta definitiva para entrenamiento puede diferir del sugerido (permite corrección humana sin perder trazabilidad del LLM).
+- Principio de seguridad de triaje: ante duda, asignar el nivel más urgente.
+
+**Alternativas descartadas:**
+- Solo prior: resolución baja, todos los RES tendrían C3 independientemente del contenido.
+- Solo LLM: sin fallback, coste mayor, riesgo de alucinación sin verificación.
+- Anotación manual: requiere clínico, tiempo prohibitivo para proyecto académico.
+
+**Riesgo:** Etiquetas semi-automáticas — no validadas por clínico real. Documentado explícitamente en limitaciones del sistema.
+
+---
+
+### D-014: Implementación Phase 3 (14/05/2026)
+
+**Implementado:**
+- `src/extraction/llm_extractor.py` — Cliente Claude Haiku con prompt Manchester, función `extraer_manchester()`, `extraer_manchester_batch()`, manejo de reintentos y fallback
+- `src/ground_truth_fase3.py` — Script principal: lee CSV Phase 1, genera GUIDs, aplica prior, llama LLM, calcula score_ansiedad, guarda CSV, sube a MinIO, registra en Postgres. Reanudable con checkpoint cada N casos.
+- `notebooks/02_ground_truth.ipynb` — Notebook de análisis: test con 5 casos, análisis distribución Manchester, figura especialidad × nivel, casos baja confianza
+- `data/master/` — Directorio del dataset maestro (ignorado en git)
+- `docs/decisions/03_ground_truth.md` — Decisión documentada completa
+
+**Columnas nuevas en dataset maestro:** guid_texto, origen, entidades_extraidas, entidades_normalizadas, nivel_llm_sugerido, razon_llm, confianza_llm, nivel_manchester, score_ansiedad, metodo_label, revision_humana, workflow_status, timestamp_procesamiento
+
+**Referencia:** `docs/decisions/03_ground_truth.md`
+
+---
+
 ## Próximos pasos confirmados
 
-1. Levantar el stack: `docker compose -f infra/docker-compose.yml up -d`
-2. Verificar: Airflow UI + MinIO + Postgres schema + DAGs visibles
-3. Hacer capturas para la presentación (Airflow UI, MinIO consola, docker ps)
-4. Invocar `/triageia-phase fase-3` para iniciar ground truth Manchester
-5. Crear `docs/decisions/03_ground_truth.md` (Phase 3)
+1. Configurar `ANTHROPIC_API_KEY` en `.env` (copiar de `.env.example`)
+2. Ejecutar: `python src/ground_truth_fase3.py --limit 5` (test con 5 casos)
+3. Si OK: `python src/ground_truth_fase3.py` (272 casos, ~5 min con Haiku)
+4. Abrir `notebooks/02_ground_truth.ipynb` y ejecutar análisis
+5. **CAPTURA REQUERIDA:** `reports/figures/distribucion_manchester_fase3.png`
+6. Revisar manualmente ≥10 casos con `confianza_llm < 0.6`
+7. Invocar `/triageia-phase fase-4` para iniciar NER y limpieza

@@ -80,8 +80,8 @@ receive_input → [transcribe_if_audio] → clean_text → extract_entities
 ```
 Phase 0  → ✅ Infraestructura base (estructura, dependencias, configuración)
 Phase 1  → ✅ Exploración del dataset (EDA, análisis de distribución)
-Phase 2  → ⏳ Infraestructura de orquestación (Docker, Airflow, Postgres, MinIO)
-Phase 3  → ⏳ Ground truth Manchester (LLM + revisión)
+Phase 2  → ✅ Infraestructura de orquestación (Docker, Airflow, Postgres, MinIO)
+Phase 3  → ✅ Ground truth Manchester (LLM + revisión)
 Phase 4  → ⏳ Limpieza y NER
 Phase 5  → ⏳ Ingeniería de features (TF-IDF, features estructuradas)
 Phase 6  → ⏳ Pipeline de entrenamiento (DAG Airflow — Etapa A)
@@ -141,16 +141,31 @@ pip install -r requirements.txt
 python -m spacy download en_core_web_sm
 ```
 
-### Servicios de orquestación (Phase 2+)
+### Servicios de orquestación (Phase 2 — implementado)
 
 ```bash
-# Levantar todos los servicios
+# Copiar variables de entorno (añadir ANTHROPIC_API_KEY)
+cp infra/.env.example infra/.env
+
+# Levantar todos los servicios (primera vez: ~5 min descarga de imágenes)
 docker compose -f infra/docker-compose.yml up -d
 
-# Verificar servicios
-# Airflow UI:  http://localhost:8080
-# MinIO UI:    http://localhost:9001
-# Postgres:    localhost:5432 (triageia_db)
+# Verificar estado
+docker compose -f infra/docker-compose.yml ps
+
+# Verificar Airflow (puede tardar 1-2 min)
+curl http://localhost:8080/health
+
+# Crear buckets en MinIO (requiere mc instalado)
+bash infra/minio/setup_buckets.sh
+
+# Verificar tablas de trazabilidad en Postgres
+docker compose -f infra/docker-compose.yml exec postgres \
+  psql -U triageia -d triageia_db -c "\dt"
+
+# UIs disponibles:
+# Airflow:  http://localhost:8080  (admin / admin)
+# MinIO:    http://localhost:9001  (minioadmin / minioadmin)
 ```
 
 ---
